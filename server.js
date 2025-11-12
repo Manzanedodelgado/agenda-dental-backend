@@ -10,7 +10,7 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
-// Configurar Google Sheets API
+// Google Sheets Setup
 const auth = new google.auth.GoogleAuth({
   credentials: {
     type: 'service_account',
@@ -18,70 +18,87 @@ const auth = new google.auth.GoogleAuth({
     private_key_id: process.env.GOOGLE_PRIVATE_KEY_ID,
     private_key: process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'),
     client_email: process.env.GOOGLE_CLIENT_EMAIL,
+    client_id: '',
+    auth_uri: 'https://accounts.google.com/o/oauth2/auth',
+    token_uri: 'https://oauth2.googleapis.com/token',
+    auth_provider_x509_cert_url: 'https://www.googleapis.com/oauth2/v1/certs',
   },
   scopes: ['https://www.googleapis.com/auth/spreadsheets'],
 });
 
 const sheets = google.sheets({ version: 'v4', auth });
+const SPREADSHEET_ID = process.env.GOOGLE_SHEET_ID;
+const SHEET_NAME = 'Citas';
 
-// Ruta de prueba
-app.get('/', (req, res) => {
-  res.json({ message: '✅ Backend de Agenda Dental funcionando correctamente' });
-});
+// Helper function to convert row to appointment object
+function rowToAppointment(row) {
+  return {
+    id: row[0] || '',
+    citMod: row[1] || '',
+    fechaAlta: row[2] || '',
+    numPac: row[3] || '',
+    apellidos: row[4] || '',
+    nombre: row[5] || '',
+    telMovil: row[6] || '',
+    fecha: row[7] || '',
+    hora: row[8] || '',
+    estadoCita: row[9] || '',
+    tratamiento: row[10] || '',
+    odontologo: row[11] || '',
+    notas: row[12] || '',
+    duracion: row[13] || ''
+  };
+}
 
-// Obtener todas las citas
+// Helper function to convert appointment object to row
+function appointmentToRow(apt) {
+  return [
+    apt.id || '',
+    apt.citMod || '',
+    apt.fechaAlta || new Date().toISOString().split('T')[0],
+    apt.numPac || '',
+    apt.apellidos || '',
+    apt.nombre || '',
+    apt.telMovil || '',
+    apt.fecha || '',
+    apt.hora || '',
+    apt.estadoCita || 'Pendiente',
+    apt.tratamiento || '',
+    apt.odontologo || '',
+    apt.notas || '',
+    apt.duracion || '30'
+  ];
+}
+
+// GET all appointments
 app.get('/api/citas', async (req, res) => {
   try {
     const response = await sheets.spreadsheets.values.get({
-      spreadsheetId: process.env.GOOGLE_SHEET_ID,
-      range: 'Citas!A2:K',
+      spreadsheetId: SPREADSHEET_ID,
+      range: `${SHEET_NAME}!A2:N`,
     });
 
     const rows = response.data.values || [];
-    const citas = rows.map((row, index) => ({
-      id: row[0] || `${index + 2}`,
-      paciente_nombre: row[1] || '',
-      paciente_telefono: row[2] || '',
-      paciente_email: row[3] || '',
-      fecha: row[4] || '',
-      hora: row[5] || '',
-      tratamiento: row[6] || '',
-      doctor: row[7] || '',
-      estado: row[8] || '',
-      notas: row[9] || '',
-      createdAt: row[10] || new Date().toISOString(),
-    }));
+    const appointments = rows.map(rowToAppointment);
 
-    res.json({ success: true, data: citas });
+    res.json({ success: true, data: appointments });
   } catch (error) {
     console.error('Error al obtener citas:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// Crear nueva cita
+// POST new appointment
 app.post('/api/citas', async (req, res) => {
   try {
-    const cita = req.body;
-    const values = [[
-      cita.id,
-      cita.paciente_nombre,
-      cita.paciente_telefono,
-      cita.paciente_email,
-      cita.fecha,
-      cita.hora,
-      cita.tratamiento,
-      cita.doctor,
-      cita.estado,
-      cita.notas,
-      cita.createdAt,
-    ]];
+    const appointment = req.body;
+    const row = appointmentToRow(appointment);
 
     await sheets.spreadsheets.values.append({
-      spreadsheetId: process.env.GOOGLE_SHEET_ID,
-      range: 'Citas!A:K',
+      spreadsheetId: SPREADSHEET_ID,
+      range: `${SHEET_NAME}!A:N`,
       valueInputOption: 'USER_ENTERED',
-      resource: { values },
+      resource: { values: [row] },
     });
 
     res.json({ success: true, message: 'Cita creada correctamente' });
@@ -91,15 +108,16 @@ app.post('/api/citas', async (req, res) => {
   }
 });
 
-// Actualizar cita
+// PUT update appointment
 app.put('/api/citas/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const cita = req.body;
+    const appointment = req.body;
 
+    // Get all rows
     const response = await sheets.spreadsheets.values.get({
-      spreadsheetId: process.env.GOOGLE_SHEET_ID,
-      range: 'Citas!A2:A',
+      spreadsheetId: SPREADSHEET_ID,
+      range: `${SHEET_NAME}!A2:N`,
     });
 
     const rows = response.data.values || [];
@@ -109,25 +127,14 @@ app.put('/api/citas/:id', async (req, res) => {
       return res.status(404).json({ success: false, error: 'Cita no encontrada' });
     }
 
-    const values = [[
-      cita.id,
-      cita.paciente_nombre,
-      cita.paciente_telefono,
-      cita.paciente_email,
-      cita.fecha,
-      cita.hora,
-      cita.tratamiento,
-      cita.doctor,
-      cita.estado,
-      cita.notas,
-      cita.createdAt,
-    ]];
+    const row = appointmentToRow(appointment);
+    const sheetRowNumber = rowIndex + 2; // +2 because sheet starts at 1 and we skip header
 
     await sheets.spreadsheets.values.update({
-      spreadsheetId: process.env.GOOGLE_SHEET_ID,
-      range: `Citas!A${rowIndex + 2}:K${rowIndex + 2}`,
+      spreadsheetId: SPREADSHEET_ID,
+      range: `${SHEET_NAME}!A${sheetRowNumber}:N${sheetRowNumber}`,
       valueInputOption: 'USER_ENTERED',
-      resource: { values },
+      resource: { values: [row] },
     });
 
     res.json({ success: true, message: 'Cita actualizada correctamente' });
@@ -137,14 +144,15 @@ app.put('/api/citas/:id', async (req, res) => {
   }
 });
 
-// Eliminar cita
+// DELETE appointment
 app.delete('/api/citas/:id', async (req, res) => {
   try {
     const { id } = req.params;
 
+    // Get all rows
     const response = await sheets.spreadsheets.values.get({
-      spreadsheetId: process.env.GOOGLE_SHEET_ID,
-      range: 'Citas!A2:A',
+      spreadsheetId: SPREADSHEET_ID,
+      range: `${SHEET_NAME}!A2:N`,
     });
 
     const rows = response.data.values || [];
@@ -154,20 +162,22 @@ app.delete('/api/citas/:id', async (req, res) => {
       return res.status(404).json({ success: false, error: 'Cita no encontrada' });
     }
 
+    const sheetRowNumber = rowIndex + 2;
+
     await sheets.spreadsheets.batchUpdate({
-      spreadsheetId: process.env.GOOGLE_SHEET_ID,
+      spreadsheetId: SPREADSHEET_ID,
       resource: {
         requests: [{
           deleteDimension: {
             range: {
               sheetId: 0,
               dimension: 'ROWS',
-              startIndex: rowIndex + 1,
-              endIndex: rowIndex + 2,
-            },
-          },
-        }],
-      },
+              startIndex: sheetRowNumber - 1,
+              endIndex: sheetRowNumber
+            }
+          }
+        }]
+      }
     });
 
     res.json({ success: true, message: 'Cita eliminada correctamente' });
@@ -177,10 +187,11 @@ app.delete('/api/citas/:id', async (req, res) => {
   }
 });
 
-// Iniciar servidor
-app.listen(PORT, () => {
-  console.log(`🚀 Servidor backend corriendo en http://localhost:${PORT}`);
-  console.log(`📊 Conectado a Google Sheets`);
+// Health check
+app.get('/', (req, res) => {
+  res.json({ status: 'ok', message: 'API de Agenda Dental funcionando' });
 });
 
-
+app.listen(PORT, () => {
+  console.log(`🚀 Servidor corriendo en puerto ${PORT}`);
+});
