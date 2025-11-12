@@ -28,7 +28,7 @@ const auth = new google.auth.GoogleAuth({
 
 const sheets = google.sheets({ version: 'v4', auth });
 const SPREADSHEET_ID = process.env.GOOGLE_SHEET_ID;
-const SHEET_NAME = 'Citas';
+const SHEET_NAME = 'Hoja 1';  // Cambiado a "Hoja 1"
 
 // Helper function to convert row to appointment object
 function rowToAppointment(row) {
@@ -70,18 +70,32 @@ function appointmentToRow(apt) {
   ];
 }
 
-// GET all appointments
+// GET all appointments (optimizado para muchas filas)
 app.get('/api/citas', async (req, res) => {
   try {
+    console.log('Obteniendo citas desde Google Sheets...');
+    
+    // Leer un rango muy amplio para capturar todas las filas
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_ID,
-      range: `${SHEET_NAME}!A2:N`,
+      range: `${SHEET_NAME}!A2:N10000`,  // Leer hasta 10,000 filas
     });
 
     const rows = response.data.values || [];
-    const appointments = rows.map(rowToAppointment);
+    console.log(`Total de filas encontradas: ${rows.length}`);
+    
+    // Filtrar solo filas con datos válidos
+    const appointments = rows
+      .filter(row => row[0] && row[7]) // Debe tener ID (columna A) y Fecha (columna H)
+      .map(rowToAppointment);
 
-    res.json({ success: true, data: appointments });
+    console.log(`Citas válidas procesadas: ${appointments.length}`);
+
+    res.json({ 
+      success: true, 
+      data: appointments,
+      total: appointments.length 
+    });
   } catch (error) {
     console.error('Error al obtener citas:', error);
     res.status(500).json({ success: false, error: error.message });
@@ -117,7 +131,7 @@ app.put('/api/citas/:id', async (req, res) => {
     // Get all rows
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_ID,
-      range: `${SHEET_NAME}!A2:N`,
+      range: `${SHEET_NAME}!A2:N10000`,
     });
 
     const rows = response.data.values || [];
@@ -152,7 +166,7 @@ app.delete('/api/citas/:id', async (req, res) => {
     // Get all rows
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_ID,
-      range: `${SHEET_NAME}!A2:N`,
+      range: `${SHEET_NAME}!A2:N10000`,
     });
 
     const rows = response.data.values || [];
