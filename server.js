@@ -1,211 +1,178 @@
-require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const { google } = require('googleapis');
+require('dotenv').config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Middleware
-app.use(cors());
+app.use(cors({
+  origin: '*',
+  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
 app.use(express.json());
 
-// Google Sheets Setup
-const auth = new google.auth.GoogleAuth({
-  credentials: {
-    type: 'service_account',
-    project_id: process.env.GOOGLE_PROJECT_ID,
-    private_key_id: process.env.GOOGLE_PRIVATE_KEY_ID,
-    private_key: process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'),
-    client_email: process.env.GOOGLE_CLIENT_EMAIL,
-    client_id: '',
-    auth_uri: 'https://accounts.google.com/o/oauth2/auth',
-    token_uri: 'https://oauth2.googleapis.com/token',
-    auth_provider_x509_cert_url: 'https://www.googleapis.com/oauth2/v1/certs',
+// Base de datos en memoria (temporal)
+let citas = [
+  {
+    id: "1",
+    nombre: "María",
+    apellidos: "González",
+    telefono: "+34 600 123 456",
+    fecha: "2024-01-15",
+    hora: "10:00",
+    tratamiento: "Limpieza",
+    doctor: "Dr. García",
+    estado: "Confirmada",
+    notas: "Primera visita",
+    created_at: "2024-01-10T10:00:00Z"
   },
-  scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+  {
+    id: "2",
+    nombre: "Juan",
+    apellidos: "Pérez",
+    telefono: "+34 600 789 012",
+    fecha: "2024-01-16",
+    hora: "14:30",
+    tratamiento: "Revisión",
+    doctor: "Dra. Martínez",
+    estado: "Pendiente",
+    notas: "",
+    created_at: "2024-01-10T11:00:00Z"
+  }
+];
+
+// Health check endpoint
+app.get('/api/health', (req, res) => {
+  res.json({ 
+    status: 'ok', 
+    message: 'Backend funcionando correctamente',
+    timestamp: new Date().toISOString(),
+    totalCitas: citas.length
+  });
 });
 
-const sheets = google.sheets({ version: 'v4', auth });
-const SPREADSHEET_ID = process.env.GOOGLE_SHEET_ID;
-const SHEET_NAME = 'Hoja 1';  // Cambiado a "Hoja 1"
-
-// Helper function to convert row to appointment object
-function rowToAppointment(row) {
-  return {
-    id: row[0] || '',
-    citMod: row[1] || '',
-    fechaAlta: row[2] || '',
-    numPac: row[3] || '',
-    apellidos: row[4] || '',
-    nombre: row[5] || '',
-    telMovil: row[6] || '',
-    fecha: row[7] || '',
-    hora: row[8] || '',
-    estadoCita: row[9] || '',
-    tratamiento: row[10] || '',
-    odontologo: row[11] || '',
-    notas: row[12] || '',
-    duracion: row[13] || ''
-  };
-}
-
-// Helper function to convert appointment object to row
-function appointmentToRow(apt) {
-  return [
-    apt.id || '',
-    apt.citMod || '',
-    apt.fechaAlta || new Date().toISOString().split('T')[0],
-    apt.numPac || '',
-    apt.apellidos || '',
-    apt.nombre || '',
-    apt.telMovil || '',
-    apt.fecha || '',
-    apt.hora || '',
-    apt.estadoCita || 'Pendiente',
-    apt.tratamiento || '',
-    apt.odontologo || '',
-    apt.notas || '',
-    apt.duracion || '30'
-  ];
-}
-
-// GET all appointments (optimizado para muchas filas)
-app.get('/api/citas', async (req, res) => {
+// Obtener todas las citas
+app.get('/api/citas/sql', (req, res) => {
   try {
-    console.log('Obteniendo citas desde Google Sheets...');
-    
-    // Leer un rango muy amplio para capturar todas las filas
-    const response = await sheets.spreadsheets.values.get({
-      spreadsheetId: SPREADSHEET_ID,
-      range: `${SHEET_NAME}!A2:N10000`,  // Leer hasta 10,000 filas
-    });
-
-    const rows = response.data.values || [];
-    console.log(`Total de filas encontradas: ${rows.length}`);
-    
-    // Filtrar solo filas con datos válidos
-    const appointments = rows
-      .filter(row => row[0] && row[7]) // Debe tener ID (columna A) y Fecha (columna H)
-      .map(rowToAppointment);
-
-    console.log(`Citas válidas procesadas: ${appointments.length}`);
-
     res.json({ 
       success: true, 
-      data: appointments,
-      total: appointments.length 
+      data: citas,
+      total: citas.length
     });
   } catch (error) {
-    console.error('Error al obtener citas:', error);
-    res.status(500).json({ success: false, error: error.message });
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
   }
 });
 
-// POST new appointment
-app.post('/api/citas', async (req, res) => {
+// Crear nueva cita
+app.post('/api/citas/sql', (req, res) => {
   try {
-    const appointment = req.body;
-    const row = appointmentToRow(appointment);
-
-    await sheets.spreadsheets.values.append({
-      spreadsheetId: SPREADSHEET_ID,
-      range: `${SHEET_NAME}!A:N`,
-      valueInputOption: 'USER_ENTERED',
-      resource: { values: [row] },
+    const nuevaCita = {
+      id: Date.now().toString(),
+      nombre: req.body.nombre,
+      apellidos: req.body.apellidos,
+      telefono: req.body.telefono,
+      fecha: req.body.fecha,
+      hora: req.body.hora,
+      tratamiento: req.body.tratamiento,
+      doctor: req.body.doctor,
+      estado: req.body.estado || 'Pendiente',
+      notas: req.body.notas || '',
+      created_at: new Date().toISOString()
+    };
+    
+    citas.push(nuevaCita);
+    
+    res.json({ 
+      success: true, 
+      message: 'Cita creada correctamente',
+      data: nuevaCita
     });
-
-    res.json({ success: true, message: 'Cita creada correctamente' });
   } catch (error) {
-    console.error('Error al crear cita:', error);
-    res.status(500).json({ success: false, error: error.message });
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
   }
 });
 
-// PUT update appointment
-app.put('/api/citas/:id', async (req, res) => {
+// Actualizar cita
+app.put('/api/citas/sql/:id', (req, res) => {
   try {
-    const { id } = req.params;
-    const appointment = req.body;
-
-    // Get all rows
-    const response = await sheets.spreadsheets.values.get({
-      spreadsheetId: SPREADSHEET_ID,
-      range: `${SHEET_NAME}!A2:N10000`,
-    });
-
-    const rows = response.data.values || [];
-    const rowIndex = rows.findIndex(row => row[0] === id);
-
-    if (rowIndex === -1) {
-      return res.status(404).json({ success: false, error: 'Cita no encontrada' });
+    const citaId = req.params.id;
+    const citaIndex = citas.findIndex(c => c.id === citaId);
+    
+    if (citaIndex === -1) {
+      return res.status(404).json({ 
+        success: false, 
+        error: 'Cita no encontrada' 
+      });
     }
-
-    const row = appointmentToRow(appointment);
-    const sheetRowNumber = rowIndex + 2; // +2 because sheet starts at 1 and we skip header
-
-    await sheets.spreadsheets.values.update({
-      spreadsheetId: SPREADSHEET_ID,
-      range: `${SHEET_NAME}!A${sheetRowNumber}:N${sheetRowNumber}`,
-      valueInputOption: 'USER_ENTERED',
-      resource: { values: [row] },
+    
+    citas[citaIndex] = {
+      ...citas[citaIndex],
+      ...req.body,
+      id: citaId // Mantener el ID original
+    };
+    
+    res.json({ 
+      success: true, 
+      message: 'Cita actualizada correctamente',
+      data: citas[citaIndex]
     });
-
-    res.json({ success: true, message: 'Cita actualizada correctamente' });
   } catch (error) {
-    console.error('Error al actualizar cita:', error);
-    res.status(500).json({ success: false, error: error.message });
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
   }
 });
 
-// DELETE appointment
-app.delete('/api/citas/:id', async (req, res) => {
+// Eliminar cita
+app.delete('/api/citas/sql/:id', (req, res) => {
   try {
-    const { id } = req.params;
-
-    // Get all rows
-    const response = await sheets.spreadsheets.values.get({
-      spreadsheetId: SPREADSHEET_ID,
-      range: `${SHEET_NAME}!A2:N10000`,
-    });
-
-    const rows = response.data.values || [];
-    const rowIndex = rows.findIndex(row => row[0] === id);
-
-    if (rowIndex === -1) {
-      return res.status(404).json({ success: false, error: 'Cita no encontrada' });
+    const citaId = req.params.id;
+    const citaIndex = citas.findIndex(c => c.id === citaId);
+    
+    if (citaIndex === -1) {
+      return res.status(404).json({ 
+        success: false, 
+        error: 'Cita no encontrada' 
+      });
     }
-
-    const sheetRowNumber = rowIndex + 2;
-
-    await sheets.spreadsheets.batchUpdate({
-      spreadsheetId: SPREADSHEET_ID,
-      resource: {
-        requests: [{
-          deleteDimension: {
-            range: {
-              sheetId: 0,
-              dimension: 'ROWS',
-              startIndex: sheetRowNumber - 1,
-              endIndex: sheetRowNumber
-            }
-          }
-        }]
-      }
+    
+    citas.splice(citaIndex, 1);
+    
+    res.json({ 
+      success: true, 
+      message: 'Cita eliminada correctamente'
     });
-
-    res.json({ success: true, message: 'Cita eliminada correctamente' });
   } catch (error) {
-    console.error('Error al eliminar cita:', error);
-    res.status(500).json({ success: false, error: error.message });
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
   }
 });
 
-// Health check
+// Ruta raíz
 app.get('/', (req, res) => {
-  res.json({ status: 'ok', message: 'API de Agenda Dental funcionando' });
+  res.json({
+    message: 'API Agenda Dental',
+    version: '1.0.0',
+    endpoints: {
+      health: '/api/health',
+      citas: '/api/citas/sql'
+    }
+  });
 });
 
 app.listen(PORT, () => {
   console.log(`🚀 Servidor corriendo en puerto ${PORT}`);
+  console.log(`📋 Total de citas: ${citas.length}`);
 });
